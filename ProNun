@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pronunciation Practice</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f3f6fb; color:#202124;
+           display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+    .card { background:white; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.08);
+           padding:20px; width:360px; max-width:95%; }
+    h1 { font-size:20px; margin:0 0 10px 0; }
+    #target { font-weight:700; font-size:32px; margin:12px 0; text-align:center; }
+    .controls { display:flex; gap:8px; justify-content:center; margin-bottom:12px; flex-wrap:wrap; }
+    button { padding:8px 10px; border-radius:8px; border:1px solid #d0d7de; background:#fff; cursor:pointer; }
+    #result p { margin:6px 0; font-size:14px; }
+    .tips { font-size:13px; color:#555; margin-top:10px; }
+    select { padding:6px; border-radius:6px; }
+    .small { font-size:12px; color:#666; text-align:center; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Pronunciation Practice</h1>
+
+    <div id="target">loading…</div>
+
+    <div class="controls">
+      <button id="playBtn">🔊 Play</button>
+      <button id="recordBtn">🎙 Start</button>
+      <button id="nextBtn">➡ Next</button>
+    </div>
+
+    <div style="text-align:center; margin-bottom:8px;">
+      <label>Language:
+        <select id="langSelect">
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="en-AU">English (Australia)</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="result">
+      <p>Recognized: <strong id="recognized">—</strong></p>
+      <p>Confidence: <strong id="confidence">—</strong></p>
+      <p>Score: <strong id="score">—</strong></p>
+      <p id="feedback" style="margin-top:6px;font-weight:600;"></p>
+    </div>
+
+    <div class="tips">
+      Tips: face the mic, speak clearly, one word at a time. Works best in Chrome.
+    </div>
+    <div class="small">No audio or text leaves the student’s device (nothing is uploaded).</div>
+  </div>
+
+<script>
+/* ===== SAMPLE WORD LIST - change to your own words ===== */
+const WORDS = [
+  "apple","banana","student","teacher","science","education",
+  "pronunciation","grammar","example","practice","physics","chemistry"
+];
+
+let idx = 0;
+const targetEl = document.getElementById('target');
+const playBtn = document.getElementById('playBtn');
+const recordBtn = document.getElementById('recordBtn');
+const nextBtn = document.getElementById('nextBtn');
+const recognizedEl = document.getElementById('recognized');
+const confidenceEl = document.getElementById('confidence');
+const scoreEl = document.getElementById('score');
+const feedbackEl = document.getElementById('feedback');
+const langSelect = document.getElementById('langSelect');
+
+function pickWord(i){
+  idx = (typeof i === 'number') ? i % WORDS.length : Math.floor(Math.random()*WORDS.length);
+  targetEl.textContent = WORDS[idx];
+  recognizedEl.textContent = "—";
+  confidenceEl.textContent = "—";
+  scoreEl.textContent = "—";
+  feedbackEl.textContent = "";
+}
+pickWord(0);
+
+/* ===== Speech Synthesis (play sample) ===== */
+playBtn.addEventListener('click', () => {
+  const text = targetEl.textContent;
+  if (!('speechSynthesis' in window)) { alert('Speech synthesis not supported'); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = langSelect.value;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+});
+
+/* ===== Speech Recognition (record & evaluate) ===== */
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition, listening = false;
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => { listening = true; recordBtn.textContent = '⏹ Stop'; };
+  recognition.onend = () => { listening = false; recordBtn.textContent = '🎙 Start'; };
+  recognition.onerror = (e) => {
+    console.error('Recognition error', e);
+    alert('Speech recognition error: ' + (e.error || 'unknown'));
+  };
+  recognition.onresult = (evt) => {
+    const transcript = evt.results[0][0].transcript.trim();
+    const conf = evt.results[0][0].confidence;
+    recognizedEl.textContent = transcript;
+    confidenceEl.textContent = Math.round(conf*100) + '%';
+    const score = evaluateScore(targetEl.textContent, transcript);
+    scoreEl.textContent = score + '%';
+    feedbackEl.textContent = feedbackText(score);
+  };
+} else {
+  recordBtn.disabled = true;
+  recordBtn.textContent = 'Mic not supported';
+  recordBtn.title = 'Use Chrome desktop/Android Chrome for speech recognition';
+}
+
+recordBtn.addEventListener('click', () => {
+  if (!recognition) return;
+  recognition.lang = langSelect.value;
+  if (listening) {
+    recognition.stop();
+  } else {
+    // stop any playing TTS
+    window.speechSynthesis.cancel();
+    recognition.start();
+  }
+});
+
+/* ===== Next word ===== */
+nextBtn.addEventListener('click', () => {
+  pickWord(idx+1);
+});
+
+/* ===== Simple scoring (Levenshtein-based) ===== */
+function sanitize(s){ return (s||'').toLowerCase().replace(/[^a-z\s]/g,'').trim(); }
+
+function levenshtein(a,b){
+  a = a || ''; b = b || '';
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({length: m+1}, ()=> new Array(n+1).fill(0));
+  for (let i=0;i<=m;i++) dp[i][0] = i;
+  for (let j=0;j<=n;j++) dp[0][j] = j;
+  for (let i=1;i<=m;i++){
+    for (let j=1;j<=n;j++){
+      const cost = a[i-1] === b[j-1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + cost);
+    }
+  }
+  return dp[m][n];
+}
+
+function evaluateScore(expected, recognized){
+  expected = sanitize(expected);
+  recognized = sanitize(recognized);
+
+  if (!expected || !recognized) return 0;
+
+  const expWords = expected.split(/\s+/);
+  const recWords = recognized.split(/\s+/);
+
+  if (expWords.length > 1) {
+    // multi-word target: compare whole phrases
+    const d = levenshtein(expected, recognized);
+    const maxLen = Math.max(expected.length, recognized.length) || 1;
+    return Math.max(0, Math.round((1 - d / maxLen) * 100));
+  } else {
+    // single word target: compare to each recognized token and take best
+    let best = 0;
+    for (const r of recWords){
+      const d = levenshtein(expected, r);
+      const maxLen = Math.max(expected.length, r.length) || 1;
+      const s = Math.round((1 - d / maxLen) * 100);
+      if (s > best) best = s;
+    }
+    return best;
+  }
+}
+
+function feedbackText(score){
+  if (score >= 85) return "Excellent — very close!";
+  if (score >= 65) return "Good — a little more practice.";
+  if (score >= 40) return "Fair — try to slow down and enunciate.";
+  return "Keep practicing — focus on vowel/consonant sounds.";
+}
+
+/* ===== Allow pressing space to start/stop for quick classroom use ===== */
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (recordBtn && !recordBtn.disabled) recordBtn.click();
+  }
+});
+</script>
+</body>
+</html>
